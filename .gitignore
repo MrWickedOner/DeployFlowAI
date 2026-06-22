@@ -25,3 +25,7 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Next.js build output
+.next/
+out/
