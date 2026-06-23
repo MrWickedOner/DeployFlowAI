@@ -1,21 +1,53 @@
 /**
- * DeployFlow AI - Unified Database Abstraction Layer
+ * DeployFlow AI — Unified Database Abstraction Layer (Dual-Mode)
  * 
- * This module abstracts all database operations (leads, profiles, sites, campaigns, etc.)
- * across the application. It automatically attempts to read/write using the official cloud
- * Supabase instance. If it detects that Supabase is unconfigured, has network issues, or
- * that the tables are not yet provisioned (e.g. PGRST205 missing table error), it gracefully
- * falls back to a lightweight local JSON file database.
+ * Automatically selects the correct database backend based on DEPLOYFLOW_MODE:
+ * 
+ *   DEPLOYFLOW_MODE=cloud  → Uses Supabase PostgreSQL (original SaaS mode)
+ *   DEPLOYFLOW_MODE=local  → Uses SQLite via libsql (self-hosted mode)
+ *   (unset)                → Tries Supabase first, falls back to local JSON
+ * 
+ * Both modes expose the same API so the rest of the app doesn't care
+ * which backend is active.
  */
 
 import { supabase } from './supabase';
 import fs from 'fs';
 import path from 'path';
 
-// Path for local database fallback
+// Lazy-load localDB only if needed (avoids breaking Cloud builds)
+let localDb = null;
+
+/**
+ * Get the current deployment mode.
+ */
+function getMode() {
+  return (process.env.DEPLOYFLOW_MODE || 'cloud').toLowerCase();
+}
+
+/**
+ * Check if we should use the local database backend.
+ */
+function isLocalMode() {
+  return getMode() === 'local';
+}
+
+/**
+ * Load the local DB adapter lazily.
+ */
+async function getLocalDb() {
+  if (!localDb) {
+    const mod = await import('./local-db.js');
+    localDb = mod.localDb || mod.default;
+    await mod.applyMigrations?.();
+  }
+  return localDb;
+}
+
+// Path for local JSON database fallback
 const LOCAL_DB_PATH = path.join(process.cwd(), 'data/local_leads_db.json');
 
-// Helper to check if we are in a Node environment (since this can run on server-side)
+// Helper to check if we are in a Node environment
 const isServer = typeof window === 'undefined';
 
 /**
@@ -25,9 +57,7 @@ function getLocalLeads() {
   if (!isServer) return [];
   try {
     const dir = path.dirname(LOCAL_DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     if (!fs.existsSync(LOCAL_DB_PATH)) {
       fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify([], null, 2), 'utf8');
       return [];
@@ -47,9 +77,7 @@ function saveLocalLeads(leads) {
   if (!isServer) return;
   try {
     const dir = path.dirname(LOCAL_DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(leads, null, 2), 'utf8');
   } catch (err) {
     console.error('⚠️ Error writing to local leads DB fallback:', err.message);
@@ -57,28 +85,31 @@ function saveLocalLeads(leads) {
 }
 
 /**
- * Unified DB API
+ * Unified DB API — works identically in both cloud and local modes.
  */
 export const db = {
   /**
-   * Retrieves all leads.
-   * Gracefully falls back to local JSON if Supabase table is not yet provisioned.
+   * Retrieves all leads, sorted by intent score (descending).
    */
   async getLeads() {
+    // Local mode: use SQLite
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getLeads();
+    }
+
+    // Cloud mode: try Supabase first, fall back to JSON
     try {
-      // 1. Try fetching from official Supabase PostgreSQL
       const { data, error } = await supabase
         .from('leads')
         .select('*')
         .order('intent_score', { ascending: false });
 
       if (error) {
-        // Log the error and trigger fallback if table doesn't exist
         console.warn(`💡 Supabase leads query failed (${error.code || error.message}). Falling back to local database...`);
         return getLocalLeads();
       }
 
-      console.log(`🔌 Loaded ${data.length} leads directly from Supabase Cloud PostgreSQL.`);
       return data;
     } catch (err) {
       console.warn(`💡 Supabase connection error: ${err.message}. Falling back to local database...`);
@@ -90,6 +121,13 @@ export const db = {
    * Retrieves a single lead by its ID.
    */
   async getLeadById(id) {
+    // Local mode
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getLeadById(id);
+    }
+
+    // Cloud mode
     try {
       const { data, error } = await supabase
         .from('leads')
@@ -110,6 +148,13 @@ export const db = {
    * Saves or updates a lead.
    */
   async saveLead(leadData) {
+    // Local mode
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.saveLead(leadData);
+    }
+
+    // Cloud mode
     try {
       const { data, error } = await supabase
         .from('leads')
@@ -131,11 +176,8 @@ export const db = {
         updated_at: new Date().toISOString()
       };
 
-      if (idx >= 0) {
-        localLeads[idx] = preparedLead;
-      } else {
-        localLeads.push(preparedLead);
-      }
+      if (idx >= 0) localLeads[idx] = preparedLead;
+      else localLeads.push(preparedLead);
 
       saveLocalLeads(localLeads);
       return preparedLead;
@@ -143,14 +185,18 @@ export const db = {
   },
 
   /**
-   * Simulates fetching active user profiles or billing configs.
+   * Retrieves agency/user profiles for campaign/outreach usage.
    */
   async getProfiles() {
+    // Local mode
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getProfiles();
+    }
+
+    // Cloud mode
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*');
-      
+      const { data, error } = await supabase.from('profiles').select('*');
       if (error) throw error;
       return data;
     } catch (err) {
