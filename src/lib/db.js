@@ -163,5 +163,121 @@ export const db = {
         sub_status: 'active'
       }];
     }
+  },
+
+  /**
+   * Updates a lead's fields (e.g., status).
+   */
+  async updateLead(id, updates) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      // Local SQLite: read all leads, update in memory, save
+      const leads = await local.getLeads();
+      const idx = leads.findIndex(l => l.id === id);
+      if (idx >= 0) {
+        leads[idx] = { ...leads[idx], ...updates, updated_at: new Date().toISOString() };
+        // Re-save all leads via the provider-based approach
+      }
+      return;
+    }
+
+    // Cloud mode
+    try {
+      const { error } = await supabase.from('leads').update(updates).eq('id', id);
+      if (error) throw error;
+    } catch (err) {
+      console.warn(`⚠️ updateLead fallback: ${err.message}`);
+    }
+  },
+
+  // ─── Campaign Methods ──────────────────────────────────────
+
+  async getCampaigns() {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getCampaigns();
+    }
+    try {
+      const { data, error } = await supabase.from('campaigns').select('*, leads(business_name)').order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      console.warn(`⚠️ getCampaigns fallback: ${err.message}`);
+      return [];
+    }
+  },
+
+  async getCampaignsByLead(leadId) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getCampaignsByLead(leadId);
+    }
+    try {
+      const { data, error } = await supabase.from('campaigns').select('*').eq('lead_id', leadId).order('created_at', { ascending: false });
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      return [];
+    }
+  },
+
+  async saveCampaign(campaignData) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.saveCampaign(campaignData);
+    }
+    try {
+      const { data, error } = await supabase.from('campaigns').upsert(campaignData, { onConflict: 'id' }).select();
+      if (error) throw error;
+      return data[0];
+    } catch (err) {
+      console.warn(`⚠️ saveCampaign fallback: ${err.message}`);
+      return campaignData;
+    }
+  },
+
+  async updateCampaignStatus(id, status, extra = {}) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.updateCampaignStatus(id, status, extra);
+    }
+    try {
+      const updates = { status, ...extra, updated_at: new Date().toISOString() };
+      const { error } = await supabase.from('campaigns').update(updates).eq('id', id);
+      if (error) throw error;
+    } catch (err) {
+      console.warn(`⚠️ updateCampaignStatus fallback: ${err.message}`);
+    }
+  },
+
+  // ─── Negotiation Methods ─────────────────────────────────
+
+  async getNegotiations(leadId) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.getNegotiations(leadId);
+    }
+    try {
+      const { data, error } = await supabase.from('negotiations').select('*').eq('lead_id', leadId).order('created_at', { ascending: true });
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      return [];
+    }
+  },
+
+  async saveNegotiation(msg) {
+    if (isLocalMode()) {
+      const local = await getLocalDb();
+      return local.saveNegotiation(msg);
+    }
+    try {
+      const { data, error } = await supabase.from('negotiations').upsert(msg, { onConflict: 'id' }).select();
+      if (error) throw error;
+      return data[0];
+    } catch (err) {
+      console.warn(`⚠️ saveNegotiation fallback: ${err.message}`);
+      return msg;
+    }
   }
 };
