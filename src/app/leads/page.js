@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react';
 
 export default function LeadFinder() {
+  // Campaign sending state
+  const [sendingCampaign, setSendingCampaign] = useState(null);
+  const [campaignMessage, setCampaignMessage] = useState('');
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,6 +126,30 @@ export default function LeadFinder() {
     }
   };
 
+  // Handle sending campaign outreach for a lead
+  const handleSendCampaign = async (leadId, businessName) => {
+    setSendingCampaign(leadId);
+    setCampaignMessage(`📤 Sending outreach to ${businessName}...`);
+    try {
+      const res = await fetch('/api/campaigns/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCampaignMessage(`✅ Campaign sent to ${businessName}! ${data.message}`);
+      } else {
+        setCampaignMessage(`❌ Failed: ${data.error}`);
+      }
+    } catch (err) {
+      setCampaignMessage(`❌ Error: ${err.message}`);
+    } finally {
+      setSendingCampaign(null);
+      setTimeout(() => setCampaignMessage(''), 5000);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[#0b1329] text-white">
       {/* Platform Navigation */}
@@ -140,7 +167,10 @@ export default function LeadFinder() {
           <div className="text-right hidden md:block">
             <p className="text-sm font-semibold text-slate-200">DeployFlow Launch Agency</p>
             <p className="text-xs text-indigo-400">agency_pro active plan</p>
-          </div>
+                        </div>
+                        <a href="/campaigns" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors mr-4">
+                          📨 Campaigns
+                        </a>
           <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center font-bold border-2 border-indigo-600 shadow-sm text-slate-100">
             LA
           </div>
@@ -209,6 +239,11 @@ export default function LeadFinder() {
             {scrapeMessage && (
               <div className="mt-4 p-3.5 bg-indigo-950/40 border border-indigo-500/20 text-indigo-300 rounded-xl text-xs animate-fade-in text-center leading-relaxed">
                 {scrapeMessage}
+              </div>
+            )}
+            {campaignMessage && (
+              <div className="mt-2 p-3 bg-emerald-950/40 border border-emerald-500/20 text-emerald-300 rounded-xl text-xs animate-fade-in text-center leading-relaxed">
+                {campaignMessage}
               </div>
             )}
           </div>
@@ -371,6 +406,20 @@ export default function LeadFinder() {
                             className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow-md text-center"
                           >
                             🎨 Create Mockups
+                          </button>
+                          <button
+                            onClick={() => handleSendCampaign(lead.id, lead.business_name)}
+                            disabled={sendingCampaign === lead.id}
+                            className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:from-slate-800 disabled:to-slate-800 text-white rounded-lg text-xs font-bold transition-all shadow-md text-center"
+                          >
+                            {sendingCampaign === lead.id ? (
+                              <svg className="animate-spin h-4 w-4 text-white inline" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            ) : (
+                              '📨 Send Campaign'
+                            )}
                           </button>
                         </div>
                       </div>
